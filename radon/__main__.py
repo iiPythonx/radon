@@ -173,7 +173,7 @@ class RadonNode:
                     case (PacketType.MESH, {}):
                         await client.send(build_packet(PacketType.MESH, {
                             "nodeList": {
-                                k: {"type": v.type, "root": v.root or PUBLIC_KEY}
+                                k: {"type": v.type.name, "root": v.root or PUBLIC_KEY}
                                 for k, v in self.nodemap.items()
                             }
                         }))
