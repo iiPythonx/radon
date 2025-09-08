@@ -64,30 +64,38 @@ class RadonNode:
             return info("mesh", f"Skipping {address}, because that's us")
 
         info("mesh", f"Attempting to mesh with {address}")
-        async with connect(f"ws://{address}:26104") as socket:
-            await socket.send(build_packet(PacketType.AUTH, {"publicKey": PUBLIC_KEY}))
-            while socket.state == State.OPEN:
-                message = extract_packet(str(await socket.recv()))
-                if message is None:
-                    break
 
-                match message:
-                    case (PacketType.AUTH, {"challenge": challenge_text}):
-                        try:
-                            decrypted_challenge = decrypt(public_key, challenge_text)
-                            await socket.send(build_packet(PacketType.AUTH, {"answer": encrypt(public_key, decrypted_challenge)}))
+        socket = None
+        while socket is None:
+            try:
+                socket = await connect(f"ws://{address}:26104")
 
-                        except CryptoError:
-                            error("mesh", f"Failed to decrypt challenge from {address}, their keys might be invalid!")
-                            break
+            except ConnectionError:
+                await asyncio.sleep(5)
 
-                    case (PacketType.ACK, {}):
-                        info("mesh", f"Successfully meshed with {address}!")
+        await socket.send(build_packet(PacketType.AUTH, {"publicKey": PUBLIC_KEY}))
+        while socket.state == State.OPEN:
+            message = extract_packet(str(await socket.recv()))
+            if message is None:
+                break
 
-                    case _:
-                        print("Unmatched packet:", message)
+            match message:
+                case (PacketType.AUTH, {"challenge": challenge_text}):
+                    try:
+                        decrypted_challenge = decrypt(public_key, challenge_text)
+                        await socket.send(build_packet(PacketType.AUTH, {"answer": encrypt(public_key, decrypted_challenge)}))
 
-            await socket.close()
+                    except CryptoError:
+                        error("mesh", f"Failed to decrypt challenge from {address}, their keys might be invalid!")
+                        break
+
+                case (PacketType.ACK, {}):
+                    info("mesh", f"Successfully meshed with {address}!")
+
+                case _:
+                    print("Unmatched packet:", message)
+
+        await socket.close()
 
     async def start_socket(self) -> None:
         async with serve(self.process_client, "0.0.0.0", 26104) as socket:
