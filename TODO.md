@@ -1,0 +1,4 @@
+- [ ] Ensure a client (public key) cannot connect multiple times
+- [ ] Implement a Python module to connect to a local Radon node
+- [ ] Implement a socket for a normal node (for use by the Python client)
+- [ ] Clean up client/key handling logic
