@@ -16,6 +16,7 @@ type PacketData = dict[str, typing.Any]
 class PacketType(Enum):
     AUTH = 1
     ACK  = 2
+    MESH = 3
 
 def build_packet(type: PacketType, data: PacketData = {}) -> str:
     return json.dumps({"type": type.name, "data": data})
