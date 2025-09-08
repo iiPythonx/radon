@@ -37,11 +37,11 @@ class RadonNode:
 
         info("node", "Radon initialized!")
         await asyncio.gather(*[
-            asyncio.create_task(self.mesh_with(address, public_key))
+            asyncio.create_task(self.mesh_with(address, decode(public_key)))
             for address, public_key in RADON_KNOWN_ROUTERS
         ])
 
-    async def mesh_with(self, address: str, public_key: str) -> None:
+    async def mesh_with(self, address: str, public_key: bytes) -> None:
         info("mesh", f"Attempting to mesh with {address}")
         async with connect(f"ws://{address}:26104") as socket:
             await socket.send(build_packet(PacketType.AUTH, {"publicKey": PUBLIC_KEY}))
@@ -51,10 +51,9 @@ class RadonNode:
                     break
 
                 match message:
-                    case (PacketType.AUTH, {"challenge": challenge_text, "publicKey": public_key}):
-                        router_public_key = decode(public_key)
-                        decrypted_challenge = decrypt(router_public_key, challenge_text)
-                        await socket.send(build_packet(PacketType.AUTH, {"answer": encrypt(router_public_key, decrypted_challenge)}))
+                    case (PacketType.AUTH, {"challenge": challenge_text}):
+                        decrypted_challenge = decrypt(public_key, challenge_text)
+                        await socket.send(build_packet(PacketType.AUTH, {"answer": encrypt(public_key, decrypted_challenge)}))
 
                     case (PacketType.ACK, {}):
                         info("mesh", f"Successfully meshed with {address}!")
@@ -65,7 +64,7 @@ class RadonNode:
             await socket.close()
 
     async def start_socket(self) -> None:
-        async with serve(self.process_client, "localhost", 26104) as socket:
+        async with serve(self.process_client, "0.0.0.0", 26104) as socket:
             info("router", "Socket created and listening at http://127.0.0.1:26104")
             await socket.serve_forever()
 
@@ -84,10 +83,7 @@ class RadonNode:
             match message:
                 case (PacketType.AUTH, {"publicKey": public_key}):
                     answer, known_pubkey = encode(os.urandom(32)), decode(public_key)
-                    await client.send(build_packet(PacketType.AUTH, {
-                        "challenge": encrypt(known_pubkey, answer),
-                        "publicKey": PUBLIC_KEY
-                    }))
+                    await client.send(build_packet(PacketType.AUTH, {"challenge": encrypt(known_pubkey, answer)}))
 
                 case (PacketType.AUTH, {"answer": given_answer}) if known_pubkey is not None:
                     given_answer = decrypt(known_pubkey, given_answer)
