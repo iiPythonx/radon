@@ -7,14 +7,13 @@ from enum import Enum
 from dataclasses import dataclass
 from argparse import ArgumentParser
 
-from nacl import public
-from websockets import ConnectionClosed, State, WebSocketException
+from websockets import State, WebSocketException
 from websockets.asyncio.client import connect
 from websockets.asyncio.server import ServerConnection, serve
 
 from nacl.exceptions import CryptoError
 
-from radon import RADON_KNOWN_ROUTERS
+from radon import RADON_KNOWN_ROUTERS, KNOWN_ROUTER_KEYS
 from radon.comms import PUBLIC_KEY, decrypt, encrypt
 from radon.utils.logs import error, info, warn
 from radon.utils.encoding import (
@@ -93,14 +92,11 @@ class RadonNode:
                 case (PacketType.ACK, {}):
                     info("mesh", f"Successfully meshed with {address}!")
 
-                    # Send a request for the node list
-                    await socket.send(build_packet(PacketType.MESH, {}))
-
-                case (PacketType.MESH, {"nodeId": node_pubkey}) if encode(public_key) in self.routers and self.mode == Mode.ROUTER:
+                case (PacketType.MESH, {"nodeId": node_pubkey}) if encode(public_key) in KNOWN_ROUTER_KEYS and self.mode == Mode.ROUTER:
                     info("mesh", f"{encode(public_key)} has a new node: {node_pubkey}")
                     self.nodemap[node_pubkey] = NodeInformation(encode(public_key))
 
-                case (PacketType.MESH, {"nodeList": received_nodelist}) if encode(public_key) in self.routers:
+                case (PacketType.MESH, {"nodeList": received_nodelist}) if encode(public_key) in KNOWN_ROUTER_KEYS:
                     self.nodemap |= {k: NodeInformation(root = v) for k, v in received_nodelist.items()}
                     info("mesh", f"Appended nodelist from {encode(public_key)}, they had {len(self.nodemap)} node(s)")
 
@@ -137,7 +133,7 @@ class RadonNode:
                         if given_answer != answer:
                             break
 
-                        if known_pubkey in [x[1] for x in RADON_KNOWN_ROUTERS]:
+                        if known_pubkey in KNOWN_ROUTER_KEYS:
                             info("mesh", f"New router connected! Pk: {known_pubkey}")
                             self.routers[known_pubkey] = client
 
