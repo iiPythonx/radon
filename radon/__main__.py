@@ -36,8 +36,8 @@ class RadonNode:
     def __init__(self, mode: Mode) -> None:
         self.mode: Mode = mode
 
-        self.nodemap: dict[str, NodeInformation]
-        self.routers: dict[str, ServerConnection]
+        self.nodemap: dict[str, NodeInformation] = {}
+        self.routers: dict[str, ServerConnection] = {}
 
         info("node", f"Radon is starting up, active mode is {mode.name}.")
         info("node", f"Pk: {PUBLIC_KEY}")
