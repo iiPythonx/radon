@@ -7,7 +7,7 @@ from enum import Enum
 from dataclasses import dataclass
 from argparse import ArgumentParser
 
-from websockets import State
+from websockets import ConnectionClosed, State, WebSocketException
 from websockets.asyncio.client import connect
 from websockets.asyncio.server import ServerConnection, serve
 
@@ -92,6 +92,10 @@ class RadonNode:
                 case (PacketType.ACK, {}):
                     info("mesh", f"Successfully meshed with {address}!")
 
+                case (PacketType.MESH, {"nodeId": node_pubkey}) if encode(public_key) in self.routers and self.mode == Mode.ROUTER:
+                    info("mesh", f"{encode(public_key)} has a new node: {node_pubkey}")
+                    self.nodemap[node_pubkey] = NodeInformation(encode(public_key))
+
                 case _:
                     print("Unmatched packet:", message)
 
@@ -109,38 +113,39 @@ class RadonNode:
         known_pubkey: str | None = None
 
         # Handle client loop
-        async for message in client:
-            message = extract_packet(str(message))
-            if message is None:
-                break
+        try:
+            async for message in client:
+                message = extract_packet(str(message))
+                if message is None:
+                    break
 
-            match message:
-                case (PacketType.AUTH, {"publicKey": public_key}):
-                    answer, known_pubkey = encode(os.urandom(32)), str(public_key)
-                    await client.send(build_packet(PacketType.AUTH, {"challenge": encrypt(decode(known_pubkey), answer)}))
+                match message:
+                    case (PacketType.AUTH, {"publicKey": public_key}):
+                        answer, known_pubkey = encode(os.urandom(32)), str(public_key)
+                        await client.send(build_packet(PacketType.AUTH, {"challenge": encrypt(decode(known_pubkey), answer)}))
 
-                case (PacketType.AUTH, {"answer": given_answer}) if known_pubkey is not None:
-                    given_answer = decrypt(decode(known_pubkey), given_answer)
-                    if given_answer != answer:
-                        break
+                    case (PacketType.AUTH, {"answer": given_answer}) if known_pubkey is not None:
+                        given_answer = decrypt(decode(known_pubkey), given_answer)
+                        if given_answer != answer:
+                            break
 
-                    if known_pubkey in [x[1] for x in RADON_KNOWN_ROUTERS]:
-                        info("mesh", f"New router connected! Pk: {known_pubkey}")
-                        self.routers[known_pubkey] = client
+                        if known_pubkey in [x[1] for x in RADON_KNOWN_ROUTERS]:
+                            info("mesh", f"New router connected! Pk: {known_pubkey}")
+                            self.routers[known_pubkey] = client
 
-                    else:
-                        info("mesh", f"New node connected! Pk: {known_pubkey}")
+                        else:
+                            info("mesh", f"New node connected! Pk: {known_pubkey}")
 
-                        self.nodemap[known_pubkey] = NodeInformation(root = None)
-                        for router in self.routers.values():
-                            info("mesh", f"Advertised us as a route for {known_pubkey}")
-                            await router.send(build_packet(PacketType.MESH, {"nodeId": known_pubkey}))
+                            self.nodemap[known_pubkey] = NodeInformation(root = None)
+                            for router in self.routers.values():
+                                info("mesh", f"Advertised us as a route for {known_pubkey}")
+                                await router.send(build_packet(PacketType.MESH, {"nodeId": known_pubkey}))
 
-                    await client.send(build_packet(PacketType.ACK))
+                        await client.send(build_packet(PacketType.ACK))
 
-                case (PacketType.MESH, {"nodeId": node_pubkey}) if known_pubkey in self.routers:
-                    info("mesh", f"{known_pubkey} has a new node: {node_pubkey}")
-                    self.nodemap[node_pubkey] = NodeInformation(known_pubkey)
+        except WebSocketException:
+            info("router", "Websocket exception occured! Client has been killed.")
+            pass
 
         await client.close()
 
