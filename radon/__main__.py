@@ -102,17 +102,18 @@ class RadonNode:
                     await socket.send(build_packet(PacketType.MESH, {}))
 
                 # Handle router to router meshing
-                case (PacketType.MESH, {"nodeId": node_pubkey}) if public_key in KNOWN_ROUTER_KEYS and self.mode == Mode.ROUTER:
+                case (PacketType.MESH, {"nodeId": node_pubkey}) if public_key in KNOWN_ROUTER_KEYS:
                     info("mesh", f"{public_key} has a new node: {node_pubkey}")
                     self.nodemap[node_pubkey] = NodeInformation(Mode.NODE, None, public_key)
 
                 # Handle router -> node data pushing
                 # This is also valid for router -> router transport
                 case (PacketType.MESH, {"nodeList": received_nodelist}) if public_key in KNOWN_ROUTER_KEYS:
-                    received_nodelist = {k: NodeInformation(Mode.NODE, None, v) for k, v in received_nodelist.items()}
+                    received_nodelist = {k: NodeInformation(Mode[v["type"]], None, v["root"]) for k, v in received_nodelist.items()}
 
                     self.nodemap |= received_nodelist
-                    info("mesh", f"Appended {len(received_nodelist)} node(s) from {public_key}`!")
+                    info("mesh", f"Appended {len(received_nodelist)} node(s) from {public_key}!")
+                    print(self.nodemap)
 
                 # Just here for the sake of logging
                 case _:
@@ -172,7 +173,7 @@ class RadonNode:
                     case (PacketType.MESH, {}):
                         await client.send(build_packet(PacketType.MESH, {
                             "nodeList": {
-                                k: v.root or PUBLIC_KEY
+                                k: {"type": v.type, "root": v.root or PUBLIC_KEY}
                                 for k, v in self.nodemap.items()
                             }
                         }))
