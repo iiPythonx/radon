@@ -91,6 +91,7 @@ class RadonNode:
 
                 case (PacketType.ACK, {}):
                     info("mesh", f"Successfully meshed with {address}!")
+                    await socket.send(build_packet(PacketType.MESH, {}))
 
                 case (PacketType.MESH, {"nodeId": node_pubkey}) if encode(public_key) in KNOWN_ROUTER_KEYS and self.mode == Mode.ROUTER:
                     info("mesh", f"{encode(public_key)} has a new node: {node_pubkey}")
