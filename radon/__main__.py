@@ -7,6 +7,7 @@ from enum import Enum
 from dataclasses import dataclass
 from argparse import ArgumentParser
 
+from nacl import public
 from websockets import ConnectionClosed, State, WebSocketException
 from websockets.asyncio.client import connect
 from websockets.asyncio.server import ServerConnection, serve
@@ -15,7 +16,7 @@ from nacl.exceptions import CryptoError
 
 from radon import RADON_KNOWN_ROUTERS
 from radon.comms import PUBLIC_KEY, decrypt, encrypt
-from radon.utils.logs import error, info
+from radon.utils.logs import error, info, warn
 from radon.utils.encoding import (
     encode, decode,
     build_packet, extract_packet, PacketType
@@ -92,12 +93,19 @@ class RadonNode:
                 case (PacketType.ACK, {}):
                     info("mesh", f"Successfully meshed with {address}!")
 
+                    # Send a request for the node list
+                    await socket.send(build_packet(PacketType.MESH, {}))
+
                 case (PacketType.MESH, {"nodeId": node_pubkey}) if encode(public_key) in self.routers and self.mode == Mode.ROUTER:
                     info("mesh", f"{encode(public_key)} has a new node: {node_pubkey}")
                     self.nodemap[node_pubkey] = NodeInformation(encode(public_key))
 
+                case (PacketType.MESH, {"nodeList": received_nodelist}) if encode(public_key) in self.routers:
+                    self.nodemap = {k: NodeInformation(root = v) for k, v in received_nodelist.items()}
+                    info("mesh", f"Received nodelist from {encode(public_key)}, they had {len(self.nodemap)} node(s)")
+
                 case _:
-                    print("Unmatched packet:", message)
+                    warn("node", f"Unmatched packet: {message}")
 
         await socket.close()
 
@@ -142,6 +150,14 @@ class RadonNode:
                                 await router.send(build_packet(PacketType.MESH, {"nodeId": known_pubkey}))
 
                         await client.send(build_packet(PacketType.ACK))
+
+                    case (PacketType.MESH, {}) if known_pubkey is not None:
+                        await client.send(build_packet(PacketType.MESH, {
+                            "nodeList": {
+                                k: v.root or PUBLIC_KEY
+                                for k, v in self.nodemap.items()
+                            }
+                        }))
 
         except WebSocketException:
             info("router", "Websocket exception occured! Client has been killed.")
