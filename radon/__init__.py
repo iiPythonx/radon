@@ -1,4 +1,4 @@
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 RADON_KNOWN_ROUTERS = [
     ("99.253.126.40", "0i+TvVZZlSV+Duh0m69luzhywj6gArVJ4kMINW8MBiU="),

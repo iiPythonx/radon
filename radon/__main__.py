@@ -101,8 +101,8 @@ class RadonNode:
                     self.nodemap[node_pubkey] = NodeInformation(encode(public_key))
 
                 case (PacketType.MESH, {"nodeList": received_nodelist}) if encode(public_key) in self.routers:
-                    self.nodemap = {k: NodeInformation(root = v) for k, v in received_nodelist.items()}
-                    info("mesh", f"Received nodelist from {encode(public_key)}, they had {len(self.nodemap)} node(s)")
+                    self.nodemap |= {k: NodeInformation(root = v) for k, v in received_nodelist.items()}
+                    info("mesh", f"Appended nodelist from {encode(public_key)}, they had {len(self.nodemap)} node(s)")
 
                 case _:
                     warn("node", f"Unmatched packet: {message}")
