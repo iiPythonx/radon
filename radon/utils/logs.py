@@ -1,13 +1,26 @@
 # Copyright (c) 2025 iiPython
 
-def log(severity: str, category: str, message: str) -> None:
-    print(f"[{severity.upper()}] {category.upper()}: {message}")
+class Logging:
+    COLOR_MAP: dict[str, int] = {
+        "info":  34,
+        "warn":  33,
+        "error": 31
+    }
 
-def info(category: str, message: str) -> None:
-    log("info", category, message)
+    @classmethod
+    def log(cls, severity: str, category: str, message: str) -> None:
+        print(f"\033[{cls.COLOR_MAP[severity]}m[{severity.upper()}] {category.upper()}: {message}\033[0m")
 
-def warn(category: str, message: str) -> None:
-    log("warn", category, message)
+    @classmethod
+    def info(cls, category: str, message: str) -> None:
+        cls.log("info", category, message)
 
-def error(category: str, message: str) -> None:
-    log("error", category, message)
+    @classmethod
+    def warn(cls, category: str, message: str) -> None:
+        cls.log("warn", category, message)
+
+    @classmethod
+    def error(cls, category: str, message: str) -> None:
+        cls.log("error", category, message)
+    
+log = Logging

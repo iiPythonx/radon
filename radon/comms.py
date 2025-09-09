@@ -7,22 +7,28 @@ from nacl.public import Box, PrivateKey, PublicKey
 from radon.utils.encoding import encode, decode
 
 # Initialization
-PRIVATE_KEY_FILE = Path.home() / ".local/share/radon/pk.bin"
-if PRIVATE_KEY_FILE.is_file():
-    PRIVATE_KEY = PrivateKey(PRIVATE_KEY_FILE.read_bytes())
+RADON_FOLDER = Path.home() / ".local/share/radon"
 
-else:   
-    PRIVATE_KEY = PrivateKey.generate()
+def fetch_keys(filename: str = "pk.bin") -> tuple[PrivateKey, str]:
+    private_key_file = RADON_FOLDER / filename
+    if private_key_file.is_file():
+        private_key = PrivateKey(private_key_file.read_bytes())
 
-    PRIVATE_KEY_FILE.parent.mkdir(parents = True, exist_ok = True)
-    PRIVATE_KEY_FILE.write_bytes(bytes(PRIVATE_KEY))
+    else:   
+        private_key = PrivateKey.generate()
 
-PUBLIC_KEY = encode(bytes(PRIVATE_KEY.public_key))
+        private_key_file.parent.mkdir(parents = True, exist_ok = True)
+        private_key_file.write_bytes(bytes(private_key))
+
+    return (
+        private_key,
+        encode(bytes(private_key.public_key))
+    )
 
 # Handle encryption/decryption
-def encrypt(target: bytes, message: str) -> str:
-    return encode(bytes(Box(PRIVATE_KEY, PublicKey(target)).encrypt(message.encode())))
+def encrypt(private: PrivateKey, target: bytes, message: str) -> str:
+    return encode(bytes(Box(private, PublicKey(target)).encrypt(message.encode())))
 
-def decrypt(sender: bytes, message: str) -> str:
-    return Box(PRIVATE_KEY, PublicKey(sender)).decrypt(decode(message)).decode()
+def decrypt(private: PrivateKey, sender: bytes, message: str) -> str:
+    return Box(private, PublicKey(sender)).decrypt(decode(message)).decode()
 
