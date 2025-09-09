@@ -37,6 +37,7 @@ class RadonNode:
 
         log.info("node", f"Radon is starting up, active mode is {mode.name}.")
         log.info("node", f"\t-> Public: {self.public_key}")
+        log.info("node", f"\t-> Which was loaded from: $RADONDIR/{pk_filename}")
 
     async def async_init(self) -> None:
         for public_key, (address, port) in RADON_KNOWN_ROUTERS.items():
@@ -96,11 +97,12 @@ class RadonNode:
 # Handle main
 if __name__ == "__main__":
     a = ArgumentParser()
-    a.add_argument("-t", "--type", choices = ("node", "router"), required = True)
-    a.add_argument("-p", "--port", type = int)
+    a.add_argument("-t", "--type", choices = ("node", "router"), required = True, help = "Type of node you want to launch, this should most likely be NODE.")
+    a.add_argument("-p", "--port", type = int, default = 26104)
+    a.add_argument("-k", "--keyname", type = str, default = "pk.bin", help = "The filename of the key you want to use/generate.")
 
     args = a.parse_args()
 
     # Startup node
-    node: RadonNode = RadonNode(Mode[args.type.upper()], port = args.port or 26104)
+    node: RadonNode = RadonNode(Mode[args.type.upper()], port = args.port, pk_filename = args.keyname)
     asyncio.run(node.async_init())

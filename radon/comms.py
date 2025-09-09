@@ -1,13 +1,14 @@
 # Copyright (c) 2025 iiPython
 
 # Modules
+import os
 from pathlib import Path
 from nacl.public import Box, PrivateKey, PublicKey
 
 from radon.utils.encoding import encode, decode
 
 # Initialization
-RADON_FOLDER = Path.home() / ".local/share/radon"
+RADON_FOLDER = Path(os.getenv("RADONDIR", Path.home() / ".local/share/radon"))
 
 def fetch_keys(filename: str = "pk.bin") -> tuple[PrivateKey, str]:
     private_key_file = RADON_FOLDER / filename
