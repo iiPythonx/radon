@@ -18,6 +18,10 @@ class PacketType(Enum):
     ACK  = 2
     MESH = 3
 
+    ROUTE_ADD = 10
+    ROUTE_DEL = 11
+    ROUTE_REQ = 12
+
 def build_packet(type: PacketType, data: PacketData = {}) -> str:
     return json.dumps({"type": type.name, "data": data})
 
