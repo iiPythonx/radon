@@ -1,21 +1,22 @@
 # Copyright (c) 2025 iiPython
 
 # Modules
+import os
 import typing
 import asyncio
 from enum import Enum
 from argparse import ArgumentParser
 
-from websockets import State, WebSocketException
+from websockets import ClientConnection, State, WebSocketException
 from websockets.asyncio.client import connect
 from websockets.asyncio.server import ServerConnection, serve
 
 from radon import RADON_KNOWN_ROUTERS
 from radon.utils.encoding import (
-    build_packet, extract_packet, PacketType
+    build_packet, decode, encode, extract_packet, PacketType
 )
 
-from radon.comms import fetch_keys
+from radon.comms import decrypt, encrypt, fetch_keys
 from radon.utils.logs import log
 
 # Initialization
@@ -34,6 +35,7 @@ class RadonNode:
 
         self.private_key, self.public_key = fetch_keys(pk_filename)
         self.routes: dict[KeyHash, list[KeyHash]] = {}
+        self.routers: list[ClientConnection] = []
 
         log.info("node", f"Radon is starting up, active mode is {mode.name}.")
         log.info("node", f"\t-> Public: {self.public_key}")
@@ -45,8 +47,63 @@ class RadonNode:
 
         await self.start_socket()
 
-    async def process_packet(self, ptype: PacketType, payload: dict[str, typing.Any]) -> None:
-        print(ptype, payload)
+    async def process_packet(self, client: ServerConnection | ClientConnection, ptype: PacketType, payload: dict[str, typing.Any]) -> None:
+        log.network(ptype.name, str(payload))
+        match (ptype, payload):
+            case (PacketType.ACK, {"success": True}) if encode(getattr(client, "pk")) in RADON_KNOWN_ROUTERS:
+                await client.send(build_packet(PacketType.ROUTE_REQ))
+
+            case (PacketType.ROUTE_REQ, {"routes": routes}) if encode(getattr(client, "pk")) in RADON_KNOWN_ROUTERS:
+                self.routes |= routes
+                log.info("mesh", "Merged route list from router!")
+
+            case (PacketType.ROUTE_REQ, {}) if self.mode == Mode.ROUTER:
+                await client.send(build_packet(PacketType.ROUTE_REQ, {"routes": self.routes}))
+
+            case (PacketType.ROUTE_ADD, {"client": encoded_client, "router": router_public_key}) if encode(getattr(client, "pk")) in RADON_KNOWN_ROUTERS:
+                if encoded_client not in self.routes:
+                    self.routes[encoded_client] = []
+
+                if router_public_key not in self.routes[encoded_client]:
+                    self.routes[encoded_client].append(router_public_key)
+                    log.info("mesh", f"{router_public_key} is a new route for {encoded_client}")
+
+            case (PacketType.AUTH, {"publicKey": sent_public_key}):
+                if self.mode == Mode.NODE:
+                    return await client.send(build_packet(PacketType.ERROR, {"message": "API disabled."}))
+
+                setattr(client, "pk", decode(sent_public_key))
+                setattr(client, "ch", encode(os.urandom(32)))
+
+                data = encrypt(self.private_key, decode(sent_public_key), getattr(client, "ch"))
+                await client.send(build_packet(PacketType.AUTH, {"challenge": data}))
+
+            case (PacketType.AUTH, {"encryptedResponse": encrypted_response}):
+                if self.mode == Mode.NODE:
+                    return await client.send(build_packet(PacketType.ERROR, {"message": "API disabled."}))
+
+                decrypted_response = decrypt(self.private_key, getattr(client, "pk"), encrypted_response)
+                challenge_correct = decrypted_response == getattr(client, "ch")
+                if challenge_correct:
+                    encoded_client = encode(getattr(client, "pk"))
+                    if encoded_client not in self.routes:
+                        self.routes[encoded_client] = []
+
+                    self.routes[encoded_client].append(self.public_key)
+
+                    log.info("mesh", "Propagating new route around the network")
+                    for router in self.routers:
+                        await router.send(build_packet(PacketType.ROUTE_ADD, {"client": encoded_client, "router": self.public_key}))
+                        log.info("mesh", f"\t-> Propagated through {encode(getattr(router, 'pk'))}")
+
+                    log.info("mesh", f"We are now a designated router for {encoded_client}")
+
+                await client.send(build_packet(PacketType.ACK, {"success": challenge_correct}))
+
+            case (PacketType.AUTH, {"challenge": challenge_text}):
+                decrypted_challenge = decrypt(self.private_key, getattr(client, "pk"), challenge_text)
+                encrypted_response = encrypt(self.private_key, getattr(client, "pk"), decrypted_challenge)
+                await client.send(build_packet(PacketType.AUTH, {"encryptedResponse": encrypted_response}))
 
     async def mesh_with(self, address: str, port: int, public_key: str) -> None:
         if public_key == self.public_key:
@@ -58,6 +115,9 @@ class RadonNode:
         while socket is None:
             try:
                 socket = await connect(f"ws://{address}:{port}")
+                setattr(socket, "pk", decode(public_key))
+
+                self.routers.append(socket)
 
             except (ConnectionError, TimeoutError):
                 await asyncio.sleep(interval)
@@ -71,7 +131,7 @@ class RadonNode:
             if message is None:
                 break
 
-            await self.process_packet(*message)
+            await self.process_packet(socket, *message)
 
         await socket.close()
 
@@ -87,9 +147,21 @@ class RadonNode:
                 if message is None:
                     break
 
-                await self.process_packet(*message)
+                await self.process_packet(client, *message)
 
         except WebSocketException:
+            if hasattr(client, "pk") and self.mode == Mode.ROUTER:
+                log.info("mesh", "Propagating removed route around the network")
+
+                encoded_client = encode(getattr(client, "pk"))
+                self.routes[encoded_client].remove(self.public_key)
+
+                for router in self.routers:
+                    await router.send(build_packet(PacketType.ROUTE_DEL, {"client": encoded_client, "router": self.public_key}))
+                    log.info("mesh", f"\t-> Propagated through {encode(getattr(router, 'pk'))}")
+
+                log.info("mesh", f"We are no longer routing {encoded_client}")
+
             log.info("router", "Websocket exception occured! Client has been killed.")
 
         await client.close()

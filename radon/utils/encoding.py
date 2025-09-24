@@ -18,6 +18,8 @@ class PacketType(Enum):
     ACK  = 2
     MESH = 3
 
+    ERROR     = 5
+
     ROUTE_ADD = 10
     ROUTE_DEL = 11
     ROUTE_REQ = 12
