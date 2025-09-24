@@ -35,6 +35,8 @@ class RadonNode:
 
         self.private_key, self.public_key = fetch_keys(pk_filename)
         self.routes: dict[KeyHash, list[KeyHash]] = {}
+
+        self.clients: list[ServerConnection] = []
         self.routers: list[ClientConnection] = []
 
         log.info("node", f"Radon is starting up, active mode is {mode.name}.")
@@ -68,6 +70,10 @@ class RadonNode:
                     self.routes[encoded_client].append(router_public_key)
                     log.info("mesh", f"{router_public_key} is a new route for {encoded_client}")
 
+                if self.mode == Mode.ROUTER:
+                    for client in self.clients:
+                        await client.send(build_packet(PacketType.ROUTE_ADD, {"client": encoded_client, "router": router_public_key}))
+
             case (PacketType.AUTH, {"publicKey": sent_public_key}):
                 if self.mode == Mode.NODE:
                     return await client.send(build_packet(PacketType.ERROR, {"message": "API disabled."}))
@@ -92,9 +98,8 @@ class RadonNode:
                     self.routes[encoded_client].append(self.public_key)
 
                     log.info("mesh", "Propagating new route around the network")
-                    for router in self.routers:
-                        await router.send(build_packet(PacketType.ROUTE_ADD, {"client": encoded_client, "router": self.public_key}))
-                        log.info("mesh", f"\t-> Propagated through {encode(getattr(router, 'pk'))}")
+                    for client in self.routers + self.clients:
+                        await client.send(build_packet(PacketType.ROUTE_ADD, {"client": encoded_client, "router": self.public_key}))
 
                     log.info("mesh", f"We are now a designated router for {encoded_client}")
 
@@ -142,6 +147,7 @@ class RadonNode:
 
     async def process_client(self, client: ServerConnection) -> None:
         try:
+            self.clients.append(client)
             async for message in client:
                 message = extract_packet(str(message))
                 if message is None:
