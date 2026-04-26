@@ -1,4 +1,4 @@
-# Copyright (c) 2025 iiPython
+# Copyright (c) 2025-2026 iiPython
 
 class Logging:
     COLOR_MAP: dict[str, int] = {

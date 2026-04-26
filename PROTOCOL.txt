@@ -1,0 +1,59 @@
+Radon Specification v1.0
+April 26th, 2026
+
+Communication:
+    TCP w/ TLS 1.3
+
+Frames:
+
+    General Layout:
+        5b: Radon fingerprint
+            Bytes: RDN\xA7
+              HEX: 0x52444EA7
+        1b: Radon version major
+        1b: Radon version minor
+        1b: Packet type
+        1b: Packet flags
+        4b: Payload size
+        xx: Payload data
+
+    Type 1: RETRIEVE
+        2b: Path size
+        xx: Path
+
+        2b: Header count
+        repeat:
+            1b: Header type
+            2b: Size of value
+            xx: Value data
+
+        2b: Parameter count
+        repeat:
+            2b: Size of key
+            xx: Key data
+            1b: Value type
+            2b: Size of value
+            xx: Value data
+
+Types:
+
+    Headers:
+        0x01: Authorization
+        0x02: Client ID
+
+    Parameters:
+        0x01: string
+        0x02: integer
+        0x03: bool
+        0x04: bytes
+
+    Packet Flags:
+        00000000
+            1 - Gzip
+            2 - Unused
+            3 - Unused
+            4 - Unused
+            5 - Unused
+            6 - Unused
+            7 - Unused
+            8 - Unused
