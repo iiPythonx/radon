@@ -1,5 +1,6 @@
 # Copyright (c) 2025 iiPython
 
+import os
 import json
 import typing
 from enum import Enum
@@ -24,13 +25,13 @@ class PacketType(Enum):
     ROUTE_DEL = 11
     ROUTE_REQ = 12
 
-def build_packet(type: PacketType, data: PacketData = {}) -> str:
-    return json.dumps({"type": type.name, "data": data})
+def build_packet(type: PacketType, data: PacketData = {}, nonce: str = "") -> str:
+    return json.dumps({"type": type.name, "data": data, "nonce": nonce or encode(os.urandom(8))})
 
-def extract_packet(packet: str) -> tuple[PacketType, PacketData] | None:
+def extract_packet(packet: str) -> tuple[PacketType, PacketData, str] | None:
     try:
         decoded: PacketData = json.loads(packet)
-        return PacketType[decoded["type"]], decoded["data"]
+        return PacketType[decoded["type"]], decoded["data"], decoded["nonce"]
 
     except json.JSONDecodeError:
         return None

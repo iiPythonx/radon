@@ -35,6 +35,7 @@ class RadonNode:
 
         self.private_key, self.public_key = fetch_keys(pk_filename)
         self.routes: dict[KeyHash, list[KeyHash]] = {}
+        self.seen_packets: list[str] = []
 
         self.clients: list[ServerConnection] = []
         self.routers: list[ClientConnection] = []
@@ -49,8 +50,13 @@ class RadonNode:
 
         await self.start_socket()
 
-    async def process_packet(self, client: ServerConnection | ClientConnection, ptype: PacketType, payload: dict[str, typing.Any]) -> None:
-        log.network(ptype.name, str(payload))
+    async def process_packet(self, client: ServerConnection | ClientConnection, ptype: PacketType, payload: dict[str, typing.Any], nonce: str) -> None:
+        if nonce in self.seen_packets:
+            return log.network("loop", "Already seen packet skipped to prevent loop")
+
+        self.seen_packets = [nonce] + self.seen_packets[:500]
+
+        log.network(ptype.name, f"{payload} [{nonce}]")
         match (ptype, payload):
             case (PacketType.ACK, {"success": True}) if encode(getattr(client, "pk")) in RADON_KNOWN_ROUTERS:
                 await client.send(build_packet(PacketType.ROUTE_REQ))
@@ -72,7 +78,7 @@ class RadonNode:
 
                 if self.mode == Mode.ROUTER:
                     for client in self.clients:
-                        await client.send(build_packet(PacketType.ROUTE_ADD, {"client": encoded_client, "router": router_public_key}))
+                        await client.send(build_packet(ptype, payload, nonce))
 
             case (PacketType.AUTH, {"publicKey": sent_public_key}):
                 if self.mode == Mode.NODE:
