@@ -14,6 +14,7 @@ Frames:
         1b: Radon version minor
         1b: Packet type
         1b: Packet flags
+        8b: Packet ID
         4b: Payload size
         xx: Payload data
 
@@ -34,6 +35,9 @@ Frames:
             1b: Value type
             2b: Size of value
             xx: Value data
+
+        4b: Body size
+        xx: Request body
 
 Types:
 
