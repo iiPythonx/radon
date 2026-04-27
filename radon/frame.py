@@ -3,6 +3,7 @@
 import struct
 import typing
 import secrets
+import asyncio
 
 RADON_MAGIC    = b"RDN\xA7"
 PROTOCOL_MAJOR = 1
@@ -157,3 +158,27 @@ class RetrieveFrame(Frame):
 FRAME_MAP = {
     0x01: RetrieveFrame
 }
+
+async def read_from_stream(stream: asyncio.StreamReader) -> Frame | None:
+    if await stream.readexactly(4) != RADON_MAGIC:
+        raise ValueError("We've received something that isn't a Radon frame!")
+
+    version_major, version_minor, packet_type, packet_flags = \
+        [int(byte) for byte in await stream.readexactly(4)]
+
+    packet_id = struct.unpack(">Q", await stream.readexactly(8))[0]
+    payload_size = struct.unpack(">I", await stream.readexactly(4))[0]
+
+    packet = {
+        "version_major": version_major,
+        "version_minor": version_minor,
+        "packet_flags": packet_flags,
+        "packet_id": packet_id
+    }
+
+    # Build frame
+    frame = FRAME_MAP.get(packet_type)
+    if frame is not None:
+        frame = frame.from_payload(memoryview(await stream.readexactly(payload_size)), **packet)
+
+    return frame
