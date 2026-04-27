@@ -22,12 +22,6 @@ Frames:
         2b: Path size
         xx: Path
 
-        2b: Header count
-        repeat:
-            1b: Header type
-            2b: Size of value
-            xx: Value data
-
         2b: Parameter count
         repeat:
             2b: Size of key
@@ -40,10 +34,6 @@ Frames:
         xx: Request body
 
 Types:
-
-    Headers:
-        0x01: Authorization
-        0x02: Client ID
 
     Parameters:
         0x01: string

@@ -3,7 +3,6 @@
 import struct
 import typing
 import secrets
-from enum import IntEnum
 
 RADON_MAGIC    = b"RDN\xA7"
 PROTOCOL_MAJOR = 1
@@ -13,10 +12,6 @@ TEXT_ENCODING  = "utf-8"
 type ParamValue = str | int | bool | bytes
 
 T = typing.TypeVar("T", bound = "Frame")
-
-class HeaderType(IntEnum):
-    AUTHORIZATION = 0x01
-    CLIENT_ID     = 0x02
 
 def u8(x: int | bytes) -> bytes:  return struct.pack(">B", x)
 def u16(x: int | bytes) -> bytes: return struct.pack(">H", x)
@@ -48,7 +43,6 @@ def encode_string(string: str) -> bytes:
 
 class Frame:
     TYPE = 0x00
-    _frame_map: dict[int, type["Frame"]] = {}
 
     def __init__(
         self,
@@ -83,60 +77,15 @@ class Frame:
             payload
         ])
 
-    @classmethod
-    def connect(cls, frame_cls: type[T]) -> type[T]:
-        cls._frame_map[frame_cls.TYPE] = frame_cls
-        return frame_cls
-
-    @classmethod
-    def parse(cls, data: bytes) -> "Frame":
-        view, offset = memoryview(data), 0
-
-        # Confirm header is valid
-        if view[:4] != RADON_MAGIC:
-            raise ValueError("The provided data is not a valid Radon frame!")
-
-        offset += 4
-
-        # Parse frame data
-        version_major = view[offset]
-        version_minor = view[offset + 1]
-        packet_type   = view[offset + 2]
-        packet_flags  = view[offset + 3]
-        offset += 4
-
-        packet_id = struct.unpack_from(">Q", view, offset)[0]
-        payload_size = struct.unpack_from(">I", view, offset + 8)[0]
-        offset += 12
-
-        # Load correct frame class
-        frame_constructor = cls._frame_map.get(packet_type)
-        if frame_constructor is None:
-            raise ValueError(f"Frame.parse received an unknown packet type of {packet_type}!")
-
-        return frame_constructor.from_payload(
-            view[offset:offset + payload_size],
-            version_major = version_major,
-            version_minor = version_minor,
-            packet_flags = packet_flags,
-            packet_id = packet_id
-        )
-
-@Frame.connect
 class RetrieveFrame(Frame):
     TYPE = 0x01
 
-    def __init__(self, path: str, headers: dict[HeaderType, str] = {}, params: dict[str, ParamValue] = {}, **kwargs) -> None:
+    def __init__(self, path: str, params: dict[str, ParamValue] = {}, body: bytes = b"", **kwargs) -> None:
         super().__init__(self.TYPE, **kwargs)
-        self.path, self.headers, self.params = path, headers, params
+        self.path, self.params, self.body = path, params, body
 
     def build_payload(self) -> bytes:
         payload = bytearray(encode_string(self.path))
-
-        # Headers
-        payload.extend(u16(len(self.headers)))
-        for header_id, header_value in self.headers.items():
-            payload.extend(u8(header_id) + encode_string(header_value))
 
         # Parameters
         payload.extend(u16(len(self.params)))
@@ -145,6 +94,8 @@ class RetrieveFrame(Frame):
             payload.extend(encode_string(param_name) + u8(param_type))
             payload.extend(bytes_plus_length(encoded_value))
 
+        # Body
+        payload.extend(bytes_plus_length(self.body, size = 4))
         return bytes(payload)
 
     @staticmethod
@@ -188,14 +139,6 @@ class RetrieveFrame(Frame):
         # Read path
         path, offset = read_string(view, offset)
 
-        # Read headers
-        headers, (header_count, offset) = {}, read_u16(view, offset)
-        for _ in range(header_count):
-            header_type, offset = read_u8(view, offset)
-            size, offset = read_u16(view, offset)
-            value, offset = read_bytes(view, offset, size)
-            headers[header_type] = value.decode(TEXT_ENCODING)
-
         # Read parameters
         params, (param_count, offset) = {}, read_u16(view, offset)
         for _ in range(param_count):
@@ -205,4 +148,12 @@ class RetrieveFrame(Frame):
             raw_value, offset = read_bytes(view, offset, size)
             params[param_name] = cls.decode_param(param_type, raw_value)
 
-        return cls(path, headers, params, **kwargs)
+        # Read body
+        body_size, offset = read_u32(view, offset)
+        body, offset = read_bytes(view, offset, body_size)
+
+        return cls(path, params, body, **kwargs)
+
+FRAME_MAP = {
+    0x01: RetrieveFrame
+}
