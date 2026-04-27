@@ -43,17 +43,15 @@ def encode_string(string: str) -> bytes:
     return bytes_plus_length(string.encode(TEXT_ENCODING))
 
 class Frame:
-    TYPE = 0x00
+    packet_type = 0x00
 
     def __init__(
         self,
-        packet_type: int,
         version_major: int = PROTOCOL_MAJOR,
         version_minor: int = PROTOCOL_MINOR,
         packet_flags: int = 0,
         packet_id: int | None = None
     ) -> None:
-        self.packet_type = packet_type
         self.version = (version_major, version_minor)
         self.flags = packet_flags
         self.packet_id = packet_id or secrets.randbits(64)
@@ -79,14 +77,14 @@ class Frame:
         ])
 
 class RetrieveFrame(Frame):
-    TYPE = 0x01
+    packet_type = 0x01
 
-    def __init__(self, path: str, params: dict[str, ParamValue] = {}, body: bytes = b"", **kwargs) -> None:
-        super().__init__(self.TYPE, **kwargs)
+    def __init__(self, path: str | None, params: dict[str, ParamValue] = {}, body: bytes = b"", **kwargs) -> None:
+        super().__init__(**kwargs)
         self.path, self.params, self.body = path, params, body
 
     def build_payload(self) -> bytes:
-        payload = bytearray(encode_string(self.path))
+        payload = bytearray(encode_string(self.path) if self.path is not None else b"")
 
         # Parameters
         payload.extend(u16(len(self.params)))
@@ -134,13 +132,7 @@ class RetrieveFrame(Frame):
                 raise ValueError("decode_param failed due to an invalid value type!")
 
     @classmethod
-    def from_payload(cls, view: memoryview, **kwargs) -> typing.Self:
-        offset = 0
-
-        # Read path
-        path, offset = read_string(view, offset)
-
-        # Read parameters
+    def read_params_from_view(cls, view: memoryview, offset: int = 0) -> tuple[dict[str, ParamValue], int]:
         params, (param_count, offset) = {}, read_u16(view, offset)
         for _ in range(param_count):
             param_name, offset = read_string(view, offset)
@@ -149,14 +141,50 @@ class RetrieveFrame(Frame):
             raw_value, offset = read_bytes(view, offset, size)
             params[param_name] = cls.decode_param(param_type, raw_value)
 
+        return params, offset
+
+    @classmethod
+    def from_payload(cls, view: memoryview, **kwargs) -> typing.Self:
+        offset = 0
+
+        # Read path
+        path, offset = read_string(view, offset)
+
+        # Read parameters
+        params, offset = cls.read_params_from_view(view, offset)
+
         # Read body
         body_size, offset = read_u32(view, offset)
         body, offset = read_bytes(view, offset, body_size)
 
         return cls(path, params, body, **kwargs)
 
+class ResponseFrame(RetrieveFrame):
+    packet_type = 0x02
+
+    def __init__(self, params: dict[str, ParamValue] = {}, body: bytes = b"", **kwargs) -> None:
+        super().__init__(None, params, body, **kwargs)
+
+    @classmethod
+    def from_payload(cls, view: memoryview, **kwargs) -> typing.Self:
+        offset = 0
+
+        # Read parameters
+        params, offset = cls.read_params_from_view(view, offset)
+
+        # Read body
+        body_size, offset = read_u32(view, offset)
+        body, offset = read_bytes(view, offset, body_size)
+
+        return cls(params, body, **kwargs)
+
+class FuckOffFrame(Frame):
+    packet_type = 0x03
+
 FRAME_MAP = {
-    0x01: RetrieveFrame
+    0x01: RetrieveFrame,
+    0x02: ResponseFrame,
+    0x03: FuckOffFrame
 }
 
 async def read_from_stream(stream: asyncio.StreamReader) -> Frame | None:

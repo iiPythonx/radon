@@ -33,6 +33,20 @@ Frames:
         4b: Body size
         xx: Request body
 
+    Type 2: RESPONSE
+        2b: Parameter count
+        repeat:
+            2b: Size of key
+            xx: Key data
+            1b: Value type
+            2b: Size of value
+            xx: Value data
+
+        4b: Body size
+        xx: Request body
+
+    Type 3: FUCKOFF
+
 Types:
 
     Parameters:
