@@ -12,7 +12,7 @@ class Service:
 
     @staticmethod
     def _log_frame(direction: typing.Literal["rx", "tx"], frame: Frame) -> None:
-        log.network(direction, f"T: 0x0{frame.packet_type} | ID: {frame.packet_id:<20} | F: {frame.flags:<3} | V: {'.'.join(str(_) for _ in frame.version)}")
+        log.network(direction, f"T: 0x{frame.packet_type:02x} | ID: {frame.packet_id:<20} | F: {frame.flags:08b} | V: {'.'.join(str(_) for _ in frame.version)}")
 
     def bind(self, frame_type: type[T], *args) -> typing.Callable:
         def internal(function: typing.Callable) -> None:
