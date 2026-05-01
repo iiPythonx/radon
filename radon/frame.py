@@ -1,212 +1,142 @@
 # Copyright (c) 2026 iiPython
 
 import struct
-import typing
-import secrets
 import asyncio
+import typing
 
-RADON_MAGIC    = b"RDN\xA7"
-PROTOCOL_MAJOR = 1
-PROTOCOL_MINOR = 0
-TEXT_ENCODING  = "utf-8"
+RADON_SEPERATOR = b"\xA7"
+TEXT_ENCODING = "utf-8"
 
-type ParamValue = str | int | bool | bytes
-
-T = typing.TypeVar("T", bound = "Frame")
+FRAME_OPT_FETCH  = 0b10000000
+FRAME_OPT_GZIP   = 0b01000000
+FRAME_OPT_PARAMS = 0b00100000
+FRAME_OPT_BODY   = 0b00010000
+FRAME_OPT_IDENT  = 0b00001000
 
 def u8(x: int | bytes) -> bytes:  return struct.pack(">B", x)
 def u16(x: int | bytes) -> bytes: return struct.pack(">H", x)
 def u32(x: int | bytes) -> bytes: return struct.pack(">I", x)
 def u64(x: int | bytes) -> bytes: return struct.pack(">Q", x)
 
-def read_u8(view: memoryview, offset: int) -> tuple[int, int]:
-    return view[offset], offset + 1
+type Parameter = int | bool | str
 
-def read_u16(view: memoryview, offset: int) -> tuple[int, int]:
-    return struct.unpack_from(">H", view, offset)[0], offset + 2
+class FrameIssue(Exception):
+    pass
 
-def read_u32(view: memoryview, offset: int) -> tuple[int, int]:
-    return struct.unpack_from(">I", view, offset)[0], offset + 4
+def encode_integer(value: int) -> tuple[int, bytes]:
+    formats = [
+        (2, ">b", -128, 127),
+        (3, ">h", -32_768, 32_767),
+        (4, ">i", -2_147_483_648, 2_147_483_647),
+        (5, ">q", -9_223_372_036_854_775_808, 9_223_372_036_854_775_807),
+    ]
 
-def read_bytes(view: memoryview, offset: int, length: int) -> tuple[bytes, int]:
-    return view[offset:offset + length].tobytes(), offset + length
+    for type_id, fmt, lo, hi in formats:
+        if lo <= value <= hi:
+            return type_id, struct.pack(fmt, value)
 
-def read_string(view: memoryview, offset: int) -> tuple[str, int]:
-    length, offset = read_u16(view, offset)
-    data, offset = read_bytes(view, offset, length)
-    return data.decode("utf-8"), offset
+    raise ValueError("provided integer value exceeds all possible sizes")
 
-def bytes_plus_length(data: bytes, size: int = 2) -> bytes:
-    return (u16(len(data)) if size == 2 else u32(len(data))) + data
+def decode_param(param_type: int, value: bytes) -> Parameter:
+    match param_type:
+        case 0:
+            return value.decode(TEXT_ENCODING)
 
-def encode_string(string: str) -> bytes:
-    return bytes_plus_length(string.encode(TEXT_ENCODING))
+        case 1:
+            return bool(struct.unpack(">B", value)[0])
+
+        case 2 | 3 | 4 | 5:
+            struct_type = "bhiq"[param_type - 2]
+            return struct.unpack(f">{struct_type}", value)[0]
+
+    raise ValueError("The parameter type provided was invalid!")
+
+def encode_param(value: Parameter) -> tuple[int, bytes]:
+    if isinstance(value, str):
+        return 0, value.encode(TEXT_ENCODING)
+
+    if isinstance(value, bool):
+        return 1, u8(int(value))
+
+    if isinstance(value, int):
+        return encode_integer(value)
+
+def build_frame(
+    options: int = 0,
+    identification: int | None = None,
+    parameters: dict[str, Parameter] | None = None,
+    body: bytes = b"",
+    path: str | None = None
+) -> bytes:
+    if parameters:
+        options |= FRAME_OPT_PARAMS
+
+    if body:
+        options |= FRAME_OPT_BODY
+
+    if identification:
+        options |= FRAME_OPT_IDENT
+
+    frame = bytearray(b"RDN" + u8(options))
+    if options & FRAME_OPT_IDENT and identification is not None:
+        frame.extend(u8(identification))
+
+    if options & FRAME_OPT_FETCH and path is not None:
+        frame.extend(u8(len(path)) + path.encode(TEXT_ENCODING))
+
+    if parameters:
+        frame.extend(u8(len(parameters)))
+        for key, value in parameters.items():
+            param_type, param_value = encode_param(value)
+            size_hint, value_size = encode_integer(len(param_value))
+            frame.extend(u8(param_type) + u8(len(key)) + key.encode(TEXT_ENCODING) + u8(size_hint) + value_size + param_value)
+
+    if body:
+        size_hint, body_size = encode_integer(len(body))
+        frame.extend(u8(size_hint) + body_size + body)
+
+    print(bytes(frame))
+    return bytes(frame)
 
 class Frame:
-    packet_type = 0x00
-
     def __init__(
         self,
-        version_major: int = PROTOCOL_MAJOR,
-        version_minor: int = PROTOCOL_MINOR,
-        packet_flags: int = 0,
-        packet_id: int | None = None
+        path: str | None = None,
+        params: dict[str, Parameter] = {},
+        body: bytes | None = None,
+        identification: int | None = None,
+        options: int = 0
     ) -> None:
-        self.version = (version_major, version_minor)
-        self.flags = packet_flags
-        self.packet_id = packet_id or secrets.randbits(64)
-
-    def build_payload(self) -> bytes:
-        return b""
+        self.path, self.params, self.body, self.identification, self.options = \
+            path, params, body, identification, options
 
     @classmethod
-    def from_payload(cls, view: memoryview, **kwargs) -> typing.Self:
-        return cls(**kwargs)
+    async def from_stream(cls, stream: asyncio.StreamReader) -> typing.Self:
+        if await stream.readexactly(3) != b"RDN":
+            raise FrameIssue
 
-    def build(self) -> bytes:
-        payload = self.build_payload()
-        return b"".join([
-            RADON_MAGIC,
-            u8(self.version[0]),
-            u8(self.version[1]),
-            u8(self.packet_type),
-            u8(self.flags),
-            u64(self.packet_id),
-            u32(len(payload)),
-            payload
-        ])
+        path, params, body, identification = None, {}, None, None
 
-class RetrieveFrame(Frame):
-    packet_type = 0x01
+        (options,) = struct.unpack(">B", await stream.readexactly(1))
+        if options & FRAME_OPT_IDENT:
+            (identification,) = struct.unpack(">B", await stream.readexactly(1))
 
-    def __init__(self, path: str | None, params: dict[str, ParamValue] = {}, body: bytes = b"", **kwargs) -> None:
-        super().__init__(**kwargs)
-        self.path, self.params, self.body = path, params, body
+        if options & FRAME_OPT_FETCH:
+            (path_size,) = struct.unpack(">B", await stream.readexactly(1))
+            path = (await stream.readexactly(path_size)).decode(TEXT_ENCODING)
 
-    def build_payload(self) -> bytes:
-        payload = bytearray(encode_string(self.path) if self.path is not None else b"")
+        if options & FRAME_OPT_PARAMS:
+            (param_count,) = struct.unpack(">B", await stream.readexactly(1))
+            for _ in range(param_count):
+                param_type, param_key_size = tuple(await stream.readexactly(2))
+                param_name = (await stream.readexactly(param_key_size)).decode(TEXT_ENCODING)
+                (size_hint,) = struct.unpack(">B", await stream.readexactly(1))
+                (param_size,) = struct.unpack(">B", await stream.readexactly([1, 2, 4, 8][size_hint - 2]))
+                params[param_name] = decode_param(param_type, (await stream.readexactly(param_size)))
 
-        # Parameters
-        payload.extend(u16(len(self.params)))
-        for param_name, param_value in self.params.items():
-            param_type, encoded_value = self.encode_param(param_value)
-            payload.extend(encode_string(param_name) + u8(param_type))
-            payload.extend(bytes_plus_length(encoded_value))
+        if options & FRAME_OPT_BODY:
+            (size_hint,) = struct.unpack(">B", await stream.readexactly(1))
+            (body_size,) = struct.unpack(">B", await stream.readexactly([1, 2, 4, 8][size_hint - 2]))
+            body = await stream.readexactly(body_size)
 
-        # Body
-        payload.extend(bytes_plus_length(self.body, size = 4))
-        return bytes(payload)
-
-    @staticmethod
-    def encode_param(value: ParamValue) -> tuple[int, bytes]:
-        if isinstance(value, str):
-            return 1, value.encode("utf-8")
-
-        if isinstance(value, bool):
-            return 3, u8(int(value))
-
-        if isinstance(value, int):
-            return 2, u32(value)
-
-        if isinstance(value, bytes):
-            return 4, value
-
-        raise ValueError("encode_param failed due to an invalid value type!")
-
-    @staticmethod
-    def decode_param(param_type: int, param_value: bytes) -> ParamValue:
-        match param_type:
-            case 0x01:
-                return param_value.decode(TEXT_ENCODING)
-
-            case 0x02:
-                return struct.unpack(">I", param_value)[0]
-
-            case 0x03:
-                return param_value[0] != 0
-                
-            case 0x04:
-                return param_value
-
-            case _:
-                raise ValueError("decode_param failed due to an invalid value type!")
-
-    @classmethod
-    def read_params_from_view(cls, view: memoryview, offset: int = 0) -> tuple[dict[str, ParamValue], int]:
-        params, (param_count, offset) = {}, read_u16(view, offset)
-        for _ in range(param_count):
-            param_name, offset = read_string(view, offset)
-            param_type, offset = read_u8(view, offset)
-            size, offset = read_u16(view, offset)
-            raw_value, offset = read_bytes(view, offset, size)
-            params[param_name] = cls.decode_param(param_type, raw_value)
-
-        return params, offset
-
-    @classmethod
-    def from_payload(cls, view: memoryview, **kwargs) -> typing.Self:
-        offset = 0
-
-        # Read path
-        path, offset = read_string(view, offset)
-
-        # Read parameters
-        params, offset = cls.read_params_from_view(view, offset)
-
-        # Read body
-        body_size, offset = read_u32(view, offset)
-        body, offset = read_bytes(view, offset, body_size)
-
-        return cls(path, params, body, **kwargs)
-
-class ResponseFrame(RetrieveFrame):
-    packet_type = 0x02
-
-    def __init__(self, params: dict[str, ParamValue] = {}, body: bytes = b"", **kwargs) -> None:
-        super().__init__(None, params, body, **kwargs)
-
-    @classmethod
-    def from_payload(cls, view: memoryview, **kwargs) -> typing.Self:
-        offset = 0
-
-        # Read parameters
-        params, offset = cls.read_params_from_view(view, offset)
-
-        # Read body
-        body_size, offset = read_u32(view, offset)
-        body, offset = read_bytes(view, offset, body_size)
-
-        return cls(params, body, **kwargs)
-
-class FuckOffFrame(Frame):
-    packet_type = 0x03
-
-FRAME_MAP = {
-    0x01: RetrieveFrame,
-    0x02: ResponseFrame,
-    0x03: FuckOffFrame
-}
-
-async def read_from_stream(stream: asyncio.StreamReader) -> Frame | None:
-    if await stream.readexactly(4) != RADON_MAGIC:
-        raise ValueError("We've received something that isn't a Radon frame!")
-
-    version_major, version_minor, packet_type, packet_flags = \
-        [int(byte) for byte in await stream.readexactly(4)]
-
-    packet_id = struct.unpack(">Q", await stream.readexactly(8))[0]
-    payload_size = struct.unpack(">I", await stream.readexactly(4))[0]
-
-    packet = {
-        "version_major": version_major,
-        "version_minor": version_minor,
-        "packet_flags": packet_flags,
-        "packet_id": packet_id
-    }
-
-    # Build frame
-    frame = FRAME_MAP.get(packet_type)
-    if frame is not None:
-        frame = frame.from_payload(memoryview(await stream.readexactly(payload_size)), **packet)
-
-    return frame
+        return cls(path, params, body, identification, options)

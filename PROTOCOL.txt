@@ -1,3 +1,43 @@
+Radon Specification v2.0
+April 30th, 2026
+
+B = Byte
+b = Bit
+
+Frame:
+    (3B) Radon fingerprint
+         Bytes: RDN
+           HEX: 0x52444E
+    (1B) Packet options
+         00000000
+         1b: fetch?
+         2b: gzip?
+         3b: params?
+         4b: body?
+         5b: ident?
+         6b: 
+         7b: 
+         8b: 
+    If Identification:
+        (1B) Identification
+            - Incrementing counter set client-side
+    If Fetch:
+        (1B) Path size
+        (XB) Path
+    If Parameters:
+        (1B) Parameter count
+        Repeat:
+            (1B) Type
+            (1B) Key size
+            (XB) Key
+            (1B) Size hint
+            (1B) Value size
+            (XB) Value
+    If Body:
+        (1B) Size hint
+        (1B) Size
+        (XB) Body
+
 Radon Specification v1.0
 April 26th, 2026
 
