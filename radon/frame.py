@@ -1,5 +1,6 @@
 # Copyright (c) 2026 iiPython
 
+import gzip
 import struct
 import asyncio
 import typing
@@ -92,10 +93,12 @@ def build_frame(
             frame.extend(u8(param_type) + u8(len(key)) + key.encode(TEXT_ENCODING) + u8(size_hint) + value_size + param_value)
 
     if body:
+        if options & FRAME_OPT_GZIP:
+            body = gzip.compress(body)
+
         size_hint, body_size = encode_integer(len(body))
         frame.extend(u8(size_hint) + body_size + body)
 
-    print(bytes(frame))
     return bytes(frame)
 
 class Frame:
@@ -131,12 +134,15 @@ class Frame:
                 param_type, param_key_size = tuple(await stream.readexactly(2))
                 param_name = (await stream.readexactly(param_key_size)).decode(TEXT_ENCODING)
                 (size_hint,) = struct.unpack(">B", await stream.readexactly(1))
-                (param_size,) = struct.unpack(">B", await stream.readexactly([1, 2, 4, 8][size_hint - 2]))
+                param_size = decode_param(size_hint, await stream.readexactly([1, 2, 4, 8][size_hint - 2]))
                 params[param_name] = decode_param(param_type, (await stream.readexactly(param_size)))
 
         if options & FRAME_OPT_BODY:
             (size_hint,) = struct.unpack(">B", await stream.readexactly(1))
-            (body_size,) = struct.unpack(">B", await stream.readexactly([1, 2, 4, 8][size_hint - 2]))
+            body_size = decode_param(size_hint, await stream.readexactly([1, 2, 4, 8][size_hint - 2]))
+
             body = await stream.readexactly(body_size)
+            if options & FRAME_OPT_GZIP:
+                body = gzip.decompress(body)
 
         return cls(path, params, body, identification, options)
