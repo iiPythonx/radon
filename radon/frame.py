@@ -62,63 +62,52 @@ def encode_param(value: Parameter) -> tuple[int, bytes]:
     if isinstance(value, int):
         return encode_integer(value)
 
-def build_frame(
-    options: int = 0,
-    identification: int | None = None,
-    parameters: dict[str, Parameter] | None = None,
-    body: bytes = b"",
-    path: str | None = None
-) -> bytes:
-    if parameters:
-        options |= FRAME_OPT_PARAMS
-
-    if body:
-        options |= FRAME_OPT_BODY
-
-    if identification:
-        options |= FRAME_OPT_IDENT
-
-    frame = bytearray(b"RDN" + u8(options))
-    if options & FRAME_OPT_IDENT and identification is not None:
-        frame.extend(u8(identification))
-
-    if options & FRAME_OPT_FETCH and path is not None:
-        frame.extend(u8(len(path)) + path.encode(TEXT_ENCODING))
-
-    if parameters:
-        frame.extend(u8(len(parameters)))
-        for key, value in parameters.items():
-            param_type, param_value = encode_param(value)
-            size_hint, value_size = encode_integer(len(param_value))
-            frame.extend(u8(param_type) + u8(len(key)) + key.encode(TEXT_ENCODING) + u8(size_hint) + value_size + param_value)
-
-    if body:
-        if options & FRAME_OPT_GZIP:
-            body = gzip.compress(body)
-
-        size_hint, body_size = encode_integer(len(body))
-        frame.extend(u8(size_hint) + body_size + body)
-
-    return bytes(frame)
-
 class Frame:
     def __init__(
         self,
-        path: str | None = None,
-        params: dict[str, Parameter] = {},
-        body: bytes | None = None,
+        options: int = 0,
         identification: int | None = None,
-        options: int = 0
+        params: dict[str, Parameter] | None = None,
+        body: bytes = b"",
+        path: str | None = None,
     ) -> None:
         self.path, self.params, self.body, self.identification, self.options = \
             path, params, body, identification, options
+
+    def __bytes__(self) -> bytes:
+        for check, option in [(self.params, FRAME_OPT_PARAMS), (self.body, FRAME_OPT_BODY), (self.identification, FRAME_OPT_IDENT)]:
+            if check:
+                self.options |= option
+
+        frame = bytearray(b"RDN" + u8(self.options))
+        if self.options & FRAME_OPT_IDENT and self.identification is not None:
+            frame.extend(u8(self.identification))
+
+        if self.options & FRAME_OPT_FETCH and self.path is not None:
+            frame.extend(u8(len(self.path)) + self.path.encode(TEXT_ENCODING))
+
+        if self.params:
+            frame.extend(u8(len(self.params)))
+            for key, value in self.params.items():
+                param_type, param_value = encode_param(value)
+                size_hint, value_size = encode_integer(len(param_value))
+                frame.extend(u8(param_type) + u8(len(key)) + key.encode(TEXT_ENCODING) + u8(size_hint) + value_size + param_value)
+
+        if self.body:
+            if self.options & FRAME_OPT_GZIP:
+                self.body = gzip.compress(self.body)
+
+            size_hint, body_size = encode_integer(len(self.body))
+            frame.extend(u8(size_hint) + body_size + self.body)
+
+        return bytes(frame)
 
     @classmethod
     async def from_stream(cls, stream: asyncio.StreamReader) -> typing.Self:
         if await stream.readexactly(3) != b"RDN":
             raise FrameIssue
 
-        path, params, body, identification = None, {}, None, None
+        path, params, body, identification = None, {}, b"", None
 
         (options,) = struct.unpack(">B", await stream.readexactly(1))
         if options & FRAME_OPT_IDENT:
@@ -135,14 +124,14 @@ class Frame:
                 param_name = (await stream.readexactly(param_key_size)).decode(TEXT_ENCODING)
                 (size_hint,) = struct.unpack(">B", await stream.readexactly(1))
                 param_size = decode_param(size_hint, await stream.readexactly([1, 2, 4, 8][size_hint - 2]))
-                params[param_name] = decode_param(param_type, (await stream.readexactly(param_size)))
+                params[param_name] = decode_param(param_type, (await stream.readexactly(int(param_size))))
 
         if options & FRAME_OPT_BODY:
             (size_hint,) = struct.unpack(">B", await stream.readexactly(1))
             body_size = decode_param(size_hint, await stream.readexactly([1, 2, 4, 8][size_hint - 2]))
 
-            body = await stream.readexactly(body_size)
+            body = await stream.readexactly(int(body_size))
             if options & FRAME_OPT_GZIP:
                 body = gzip.decompress(body)
 
-        return cls(path, params, body, identification, options)
+        return cls(options, identification, params, body, path)
